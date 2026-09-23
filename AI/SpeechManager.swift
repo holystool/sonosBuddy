@@ -74,9 +74,8 @@ public final class SpeechManager: NSObject, ObservableObject {
 
     public override init() {
         super.init()
-        // 优先使用当前系统语言（中文或英文）
-        let locale = Locale.current.language.languageCode?.identifier == "zh" ? Locale(identifier: "zh-CN") : Locale.current
-        self.speechRecognizer = SFSpeechRecognizer(locale: locale) ?? SFSpeechRecognizer(locale: Locale(identifier: "zh-CN")) ?? SFSpeechRecognizer()
+        // zh-CN 识别器原生支持中英混合识别（中文+英文均可）
+        self.speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "zh-CN")) ?? SFSpeechRecognizer()
     }
 
     public func requestPermissions() async -> Bool {

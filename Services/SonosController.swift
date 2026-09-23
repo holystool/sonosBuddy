@@ -247,6 +247,14 @@ public final class SonosController {
             self.isOAuthAuthenticating = false
             self.lastActionFeedback = "OAuth authorized! Connecting to Sonos..."
 
+            // 通知 AppDelegate 授权成功，再次弹出设置面板
+            await MainActor.run {
+                NotificationCenter.default.post(
+                    name: NSNotification.Name("SonosAuthSuccess"),
+                    object: nil
+                )
+            }
+
             await connect()
         } catch {
             self.isOAuthAuthenticating = false
@@ -432,7 +440,7 @@ public final class SonosController {
 
             if !parsedGroups.isEmpty {
                 self.groups = parsedGroups
-                if !parsedDevices.isEmpty { self.allDevices = parsedDevices }
+                if !parsedDevices.isEmpty { self.allDevices = parsedDevices.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending } }
                 restoreOrSelectGroup(from: parsedGroups, preferredDeviceIds: preferredDeviceIds)
             }
 

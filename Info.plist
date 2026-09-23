@@ -6,5 +6,9 @@
 	<string>AppIcon</string>
 	<key>CFBundleIconName</key>
 	<string>AppIcon</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>sonosBuddy uses speech recognition to enable voice control of your Sonos speakers, allowing you to play music by speaking commands.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>sonosBuddy uses the microphone to capture your voice commands for controlling Sonos speakers.</string>
 </dict>
 </plist>

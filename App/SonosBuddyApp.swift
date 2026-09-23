@@ -40,7 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let panelHeight: CGFloat = 126
         panel = KeyPanel(
             contentRect: NSRect(x: 0, y: 0, width: panelWidth, height: panelHeight),
-            styleMask: [.titled, .fullSizeContentView, .borderless],
+            styleMask: [.fullSizeContentView, .borderless],
             backing: .buffered,
             defer: false
         )
@@ -97,8 +97,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             await versionChecker.checkForUpdate()
         }
 
-        // 未授权时自动弹出设置面板，引导用户完成 OAuth 登录
+        // 未授权时自动弹出设置面板，引导用户完成 OAuth 登录（不常驻）
         if controller.config.bearerToken.isEmpty {
+            isFirstLaunchWithoutAuth = true
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
                 self?.showPanel()
                 NotificationCenter.default.post(
@@ -107,13 +108,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 )
             }
         }
+
+        // 观察授权成功事件，授权成功后再次弹出设置面板（常驻）
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAuthSuccess),
+            name: NSNotification.Name("SonosAuthSuccess"),
+            object: nil
+        )
     }
 
     private var isPinned: Bool = false
+    private var isFirstLaunchWithoutAuth: Bool = false
 
     @objc private func handleSetPinned(_ notif: Notification) {
         if let pinned = notif.object as? Bool {
-            self.isPinned = pinned
+            // 首次启动未授权时，不常驻
+            if isFirstLaunchWithoutAuth {
+                self.isPinned = false
+            } else {
+                self.isPinned = pinned
+            }
         }
     }
 
@@ -123,19 +138,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    @objc private func handleAuthSuccess() {
+        // 授权成功后，取消首次启动标记，再次弹出设置面板（常驻）
+        isFirstLaunchWithoutAuth = false
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.showPanel()
+            NotificationCenter.default.post(
+                name: NSNotification.Name("SonosOpenSettings"),
+                object: nil
+            )
+        }
+    }
+
     @objc private func handlePanelResize(_ notif: Notification) {
         guard let size = notif.object as? CGSize else { return }
         var frame = panel.frame
-        let diffHeight = size.height - frame.size.height
-        frame.origin.y -= diffHeight
+        
+        // 调整宽度时保持水平居中
         frame.origin.x += (frame.size.width - size.width) / 2
         frame.size = size
+        
+        // 重新定位：面板顶部紧贴菜单栏底部
+        if let screen = NSScreen.main {
+            frame.origin.y = screen.visibleFrame.maxY - size.height
+        }
+        
         panel.setFrame(frame, display: true, animate: false)
         hostingView.frame = NSRect(origin: .zero, size: size)
         panel.invalidateShadow()
     }
 
+    private var lastClickLocation: NSPoint = .zero
+    
     @objc private func handleStatusBarClick() {
+        // 记录点击位置用于面板定位
+        lastClickLocation = NSEvent.mouseLocation
+        
         if let event = NSApp.currentEvent, event.type == .rightMouseUp {
             showContextMenu()
         } else {
@@ -197,7 +236,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let panelHeight: CGFloat = 400
             let p = KeyPanel(
                 contentRect: NSRect(x: 0, y: 0, width: panelWidth, height: panelHeight),
-                styleMask: [.titled, .fullSizeContentView, .borderless],
+                styleMask: [.fullSizeContentView, .borderless],
                 backing: .buffered,
                 defer: false
             )
@@ -225,12 +264,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
               let buttonWindow = button.window,
               let screen = buttonWindow.screen ?? NSScreen.main else { return }
 
-        let buttonFrame = buttonWindow.convertToScreen(button.convert(button.bounds, to: nil))
+        // 获取按钮在窗口中的 frame，然后转换到屏幕坐标
+        let buttonFrameInWindow = button.frame
+        let buttonFrame = buttonWindow.convertToScreen(buttonFrameInWindow)
+        
         let panelSize = aboutPanel.frame.size
         let screenFrame = screen.visibleFrame
 
+        // 面板水平居中于按钮
         var x = buttonFrame.midX - panelSize.width / 2
-        let y = buttonFrame.minY - panelSize.height - 4
+        // 面板紧贴按钮底部
+        let y = buttonFrame.minY - panelSize.height
         x = max(screenFrame.minX + 4, min(x, screenFrame.maxX - panelSize.width - 4))
         aboutPanel.setFrameOrigin(NSPoint(x: x, y: max(screenFrame.minY, y)))
         aboutPanel.invalidateShadow()
@@ -259,6 +303,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         positionPanel()
         panel.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        
+        // 延迟重新定位，确保所有布局完成后再紧贴菜单栏
+        DispatchQueue.main.async { [weak self] in
+            self?.positionPanel()
+        }
+        
         NotificationCenter.default.post(name: NSNotification.Name("SonosPanelDidShow"), object: nil)
         startEventMonitor()
     }
@@ -300,20 +350,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func positionPanel() {
-        guard let button = statusItem.button,
-              let buttonWindow = button.window,
-              let screen = buttonWindow.screen ?? NSScreen.main else { return }
-
-        let buttonFrame = buttonWindow.convertToScreen(button.convert(button.bounds, to: nil))
+        guard let screen = NSScreen.main else { return }
+        
         let panelSize = panel.frame.size
-        let screenFrame = screen.visibleFrame
-
-        var x = buttonFrame.midX - panelSize.width / 2
-        let y = buttonFrame.minY - panelSize.height - 4
-
+        
+        // 使用点击位置定位面板
+        let clickX = lastClickLocation.x
+        
+        // 面板水平居中于点击位置
+        var x = clickX - panelSize.width / 2
+        
+        // 面板顶部紧贴菜单栏底部
+        // screen.visibleFrame.maxY 是菜单栏底部的精确 Y 坐标
+        // setFrame 的 origin 是左下角，所以 y = visibleFrame.maxY - panelHeight
+        let y = screen.visibleFrame.maxY - panelSize.height
+        
         // 防止超出屏幕边缘
-        x = max(screenFrame.minX + 4, min(x, screenFrame.maxX - panelSize.width - 4))
-        panel.setFrameOrigin(NSPoint(x: x, y: max(screenFrame.minY, y)))
+        x = max(screen.visibleFrame.minX + 4, min(x, screen.visibleFrame.maxX - panelSize.width - 4))
+        
+        let newFrame = NSRect(x: x, y: y, width: panelSize.width, height: panelSize.height)
+        panel.setFrame(newFrame, display: true)
         panel.invalidateShadow()
     }
 
